@@ -1,29 +1,25 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
-  timeout: 10000
+  baseURL: 'http://192.168.106.5:8080',
+  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' }
 })
 
 export default {
-  getDailyTasks(date) {
-    return api.get('/tasks', {
-      params: {
-        start_time: date + ' 00:00:00',
-        end_time: date + ' 23:59:59'
-      }
-    })
+  fetchTasks() {
+    return api.get('/user/tasks')
   },
-  
-  createTask(task) {
-    return api.post('/tasks', task)
+  createTask(task, uploader) {
+    return api.post('/user/tasks', task, { params: { uploader } })
   },
-  
-  updateTask(id, updates) {
-    return api.put(`/tasks/${id}`, updates)
+  updateTask(id, task) {
+    return api.put(`/user/tasks/${id}`, task)
   },
-  
-  completeTask(id) {
-    return api.patch(`/tasks/${id}`, { done: true })
+  deleteTask(id) {
+    return api.delete(`/user/tasks/${id}`)
+  },
+  toggleTaskStatus(id, status) {
+    return api.put(`/user/tasks/${id}`, { done: status })
   }
 }

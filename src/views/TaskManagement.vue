@@ -3,12 +3,18 @@
     <!-- 顶部操作栏 -->
     <div class="action-bar">
       <h2>运维任务管理</h2>
-      <div>
+      <div class="quick-add">
+        <input
+            v-model="quickTaskName"
+            placeholder="输入任务名称，回车添加"
+            @keyup.enter="handleQuickAdd"
+            :disabled="loading"
+        >
         <button @click="fetchTasks" class="refresh-btn" :disabled="loading">
           ↻ 刷新
         </button>
-        <button @click="showCreateForm = true" class="create-btn" :disabled="loading">
-          + 新建任务
+        <button @click="showReportForm = !showReportForm" class="report-btn">
+          {{ showReportForm ? '隐藏周报' : '生成周报' }}
         </button>
       </div>
     </div>
@@ -30,14 +36,14 @@
       <div
           v-for="task in tasks"
           :key="task.ID"
-          :class="['task-item', { completed: task.done }]"
+          :class="['task-item', { 'completed': task.done }]"
       >
         <input
             type="checkbox"
             :checked="task.done"
             @change="toggleTaskStatus(task)"
         >
-        <div class="task-content">
+        <div class="task-content" :class="{ 'strikethrough': task.done }">
           <h3>{{ task.name }}</h3>
           <p>{{ task.content || '无详细描述' }}</p>
           <div class="task-meta">
@@ -51,29 +57,38 @@
             </span>
           </div>
         </div>
-        <button
-            @click="deleteTask(task.ID)"
-            class="delete-btn"
-            :disabled="processingIds.includes(task.ID)"
-        >
-          <span v-if="processingIds.includes(task.ID)">删除中...</span>
-          <span v-else>删除</span>
-        </button>
+        <div class="task-actions">
+          <button
+              @click="showEditForm(task)"
+              class="edit-btn"
+              :disabled="processingIds.includes(task.ID)"
+          >
+            编辑
+          </button>
+          <button
+              @click="deleteTask(task.ID)"
+              class="delete-btn"
+              :disabled="processingIds.includes(task.ID)"
+          >
+            <span v-if="processingIds.includes(task.ID)">删除中...</span>
+            <span v-else>删除</span>
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- 新建任务表单 -->
-    <div v-if="showCreateForm" class="modal">
+    <!-- 编辑/补充详情表单 -->
+    <div v-if="showEditDialog" class="modal">
       <div class="form-container">
-        <h3>新建任务</h3>
-        <form @submit.prevent="handleCreateTask">
+        <h3>{{ editingTask.ID ? '编辑任务' : '补充任务详情' }}</h3>
+        <form @submit.prevent="handleSubmitTask">
           <div class="form-group">
             <label>任务名称 <span class="required">*</span></label>
-            <input v-model="newTask.name" required maxlength="50">
+            <input v-model="editingTask.name" required maxlength="50">
           </div>
           <div class="form-group">
             <label>任务类型</label>
-            <select v-model="newTask.taskType">
+            <select v-model="editingTask.task_type">
               <option value="">选择类型</option>
               <option value="巡检">巡检</option>
               <option value="维修">维修</option>
@@ -82,7 +97,7 @@
           </div>
           <div class="form-group">
             <label>优先级</label>
-            <select v-model="newTask.priority">
+            <select v-model="editingTask.priority">
               <option value="1">1 (最高)</option>
               <option value="2">2</option>
               <option value="3" selected>3</option>
@@ -92,12 +107,12 @@
           </div>
           <div class="form-group">
             <label>任务详情</label>
-            <textarea v-model="newTask.content" rows="4" maxlength="500"></textarea>
+            <textarea v-model="editingTask.content" rows="4" maxlength="500"></textarea>
           </div>
           <div class="form-actions">
             <button
                 type="button"
-                @click="showCreateForm = false"
+                @click="showEditDialog = false"
                 :disabled="submitting"
             >
               取消
@@ -107,7 +122,7 @@
                 :disabled="submitting"
             >
               <span v-if="submitting">提交中...</span>
-              <span v-else>提交</span>
+              <span v-else>保存</span>
             </button>
           </div>
         </form>
@@ -120,27 +135,29 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import dayjs from 'dayjs'
+import WeeklyReport from "@/components/WeeklyReport.vue";
 
 export default {
   setup() {
     const tasks = ref([])
     const loading = ref(false)
     const error = ref(null)
-    const showCreateForm = ref(false)
-    const submitting = ref(false)
     const processingIds = ref([])
+    const quickTaskName = ref('')
+    const showEditDialog = ref(false)
+    const submitting = ref(false)
 
-    const newTask = ref({
+    const editingTask = ref({
+      ID: null,
       name: '',
-      taskType: '',
+      task_type: '',
       content: '',
       priority: 3,
-      uploader: '当前用户' // 根据实际登录用户修改
+      uploader: ''
     })
 
     const api = axios.create({
-      baseURL: 'http://192.168.0.4:8080',
-      // baseURL: 'http://192.168.106.5:8080',
+      baseURL: 'http://192.168.106.5:8080',
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json'
@@ -149,17 +166,20 @@ export default {
 
     const formatDate = (date) => dayjs(date).format('YYYY-MM-DD HH:mm')
 
+    const getCurrentUser = () => {
+      try {
+        const user = JSON.parse(localStorage.getItem('userInfo')) || {}
+        return user.username || '当前用户'
+      } catch {
+        return '当前用户'
+      }
+    }
+
     const fetchTasks = async () => {
       try {
         loading.value = true
         error.value = null
-
-        // 打印完整请求路径
-        //const fullUrl = api.defaults.baseURL + '/user/tasks';
-
-
         const response = await api.get('/user/tasks')
-       // console.log('完整请求路径:', fullUrl);
         tasks.value = response.data.data || []
       } catch (err) {
         console.error('获取任务失败:', err)
@@ -171,58 +191,142 @@ export default {
         loading.value = false
       }
     }
+// 从当前页面URL获取参数（如: http://yourfrontend.com?uploader=user123）
+    const getUploaderFromURL = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      let uploader = urlParams.get('uploader');
 
-    const handleCreateTask = async () => {
-      if (!newTask.value.name.trim()) {
-        alert('任务名称不能为空')
-        return
+      // 验证参数是否存在
+      if (!uploader || uploader.trim() === '') {
+        console.warn('URL中未找到uploader参数，使用默认值');
+        uploader = 'defaultUser'; // 设置默认值
       }
+
+      return encodeURIComponent(uploader); // 编码特殊字符
+    };
+
+
+    const handleQuickAdd = async () => {
+      if (!quickTaskName.value.trim()) return;
 
       try {
-        submitting.value = true
+        loading.value = true;
 
-        // 1. 获取当前用户（优先从本地存储，其次用默认值）
-        const user = JSON.parse(localStorage.getItem('userInfo')) || {}
-        const uploader = user.username || '当前用户'
+        // 获取uploader参数（优先从URL，其次从localStorage）
+        const uploader = getUploaderFromURL() ||
+            JSON.parse(localStorage.getItem('userInfo'))?.username ||
+            'defaultUser';
 
-        // 2. 构造请求参数（注意中文编码）
-        const params = new URLSearchParams()
-        params.append('uploader', encodeURIComponent(uploader))
+        // 方式1：通过axios的params自动拼接（推荐）
+        const response = await api.post('/user/tasks',
+            {
+              name: quickTaskName.value.trim(),
+              content: '',
+              priority: 3
+            },
+            {
+              params: { uploader } // 自动拼接到URL
+            }
+        );
 
-        // 3. 发送请求（参数通过URL传递）
-        const response = await api.post('/user/tasks', {
-          name: newTask.value.name.trim(),
-          content: newTask.value.content.trim(),
-          priority: parseInt(newTask.value.priority),
-          taskType: newTask.value.taskType
-        }, {
-          params: params // 自动拼接到URL
-        })
-        if (response.status === 200) {
-          showCreateForm.value = false
-          resetNewTaskForm()
-          await fetchTasks()
-          alert('任务创建成功')
-        }
+        // 验证实际请求URL
+        console.log('实际请求URL:', response.config.url);
+        // 应输出：http://192.168.0.2:8080/user/tasks?uploader=user123
+
+        quickTaskName.value = '';
+        await fetchTasks();
       } catch (err) {
-        console.error('创建任务失败:', err)
-        alert(`创建失败: ${err.response?.data?.error || err.message}`)
+        console.error('请求详情:', {
+          url: err.config?.url,    // 检查最终URL
+          params: err.config?.params,
+          error: err.message
+        });
+        alert(`创建失败: ${err.response?.data?.error || err.message}`);
       } finally {
-        submitting.value = false
+        loading.value = false;
       }
+    };
+
+    const showEditForm = (task) => {
+      editingTask.value = {
+        ID: task.ID,
+        name: task.name,
+        task_type: task.task_type || '',
+        content: task.content || '',
+        priority: task.priority || 3,
+        uploader: task.uploader || getCurrentUser()
+      }
+      showEditDialog.value = true
     }
 
-    const resetNewTaskForm = () => {
-      newTask.value = {
-        name: '',
-        taskType: '',
-        content: '',
-        priority: 3,
-        uploader: '当前用户',
-        startTime: new Date().toISOString(),      // 默认当前时间
-        endTime: new Date(Date.now() + 86400000).toISOString() // 默认24小时后
+    const handleSubmitTask = async () => {
+      try {
+        submitting.value = true;
+
+        // 获取当前用户（优先从URL参数，其次从localStorage）
+        const uploader = getUploaderFromURL() || getCurrentUser();
+
+        // 准备符合后端结构的数据
+        const payload = {
+          name: editingTask.value.name,
+          task_type: editingTask.value.task_type, // 注意转为后端使用的蛇形命名
+          content: editingTask.value.content,
+          priority: parseInt(editingTask.value.priority) || 3, // 确保是数字
+          uploader: uploader,
+          done: editingTask.value.done || false // 确保有默认值
+        };
+
+        console.log('提交数据:', {
+          original: editingTask.value,
+          transformed: payload
+        });
+
+        let response;
+        if (editingTask.value.ID) {
+          // 更新任务
+          response = await api.put(`/user/tasks/${editingTask.value.ID}`, payload);
+          console.log('更新响应:', response.data);
+        } else {
+          // 创建任务
+          response = await api.post('/user/tasks', payload, {
+            params: { uploader } // 确保上传者通过URL参数传递
+          });
+          console.log('创建响应:', response.data);
+        }
+
+        // 检查响应是否成功（根据您的API实际结构调整）
+        if (response.data && response.data.code !== 200) {
+          throw new Error(response.data.msg || '操作失败');
+        }
+
+        // 关闭弹窗并刷新列表
+        showEditDialog.value = false;
+        await fetchTasks();
+
+      } catch (err) {
+        console.error('完整错误详情:', {
+          message: err.message,
+          request: err.config ? {
+            url: err.config.url,
+            method: err.config.method,
+            data: err.config.data,
+            params: err.config.params
+          } : null,
+          response: err.response ? {
+            status: err.response.status,
+            data: err.response.data
+          } : null
+        });
+
+        // 用户友好的错误提示
+        const errorMsg = err.response?.data?.msg ||
+            err.response?.data?.error ||
+            err.message;
+        alert(`操作失败: ${errorMsg}`);
+      } finally {
+        submitting.value = false;
       }
-    }
+    };
 
     const deleteTask = async (id) => {
       if (!confirm('确定要删除此任务吗？')) return
@@ -261,12 +365,15 @@ export default {
       tasks,
       loading,
       error,
-      showCreateForm,
-      newTask,
-      submitting,
+      quickTaskName,
       processingIds,
+      showEditDialog,
+      editingTask,
+      submitting,
       fetchTasks,
-      handleCreateTask,
+      handleQuickAdd,
+      showEditForm,
+      handleSubmitTask,
       deleteTask,
       toggleTaskStatus,
       formatDate
@@ -275,17 +382,22 @@ export default {
 }
 </script>
 
-
-
 <style scoped>
-/* 基础样式 */
-.task-manager {
-  max-width: 1000px;
-  margin: 0 auto;
-  padding: 20px;
-  position: relative;
+/* 新增的快速添加样式 */
+.quick-add {
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
+.quick-add input {
+  padding: 8px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  min-width: 200px;
+}
+
+/* 调整原有样式 */
 .action-bar {
   display: flex;
   justify-content: space-between;
@@ -294,6 +406,96 @@ export default {
   gap: 15px;
 }
 
+.task-actions {
+  display: flex;
+  gap: 8px;
+}
+/* 已完成任务的栅格线效果 */
+.task-completed-strike {
+  position: relative;
+}
+
+.task-completed-strike::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  background: repeating-linear-gradient(
+      to right,
+      #ccc 0px,
+      #ccc 2px,
+      transparent 2px,
+      transparent 4px
+  );
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* 保持原有completed样式 */
+.task-item.completed {
+  opacity: 0.7;
+  background: #f9f9f9;
+  color: #999; /* 可选：文字颜色变灰 */
+}
+/* 已完成任务整体样式 */
+.task-item.completed {
+  opacity: 0.7;
+  background-color: #f9f9f9;
+}
+
+/* 删除线效果 */
+.strikethrough h3,
+.strikethrough p {
+  position: relative;
+  display: inline-block;
+}
+
+.strikethrough h3::after,
+.strikethrough p::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 1.5px;  /* 线粗 */
+  background: #888; /* 线颜色 */
+  transform: translateY(-50%);
+  animation: strike 0.3s ease-out forwards;
+}
+
+/* 删除线动画 */
+@keyframes strike {
+  from { width: 0 }
+  to { width: 100% }
+}
+
+/* 复选框样式调整 */
+.task-item.completed input[type="checkbox"] {
+  filter: grayscale(70%);
+  opacity: 0.7;
+}
+.edit-btn {
+  padding: 6px 12px;
+  background: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  min-width: 60px;
+}
+
+/* 其他原有样式保持不变 */
+.task-manager {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px;
+  position: relative;
+}
+.task-completed-strike input[type="checkbox"] {
+  opacity: 0.6;
+  filter: grayscale(70%);
+}
 button {
   cursor: pointer;
   transition: all 0.2s;
@@ -304,17 +506,8 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.create-btn {
-  padding: 8px 16px;
-  background: #42b983;
-  color: white;
-  border: none;
-  border-radius: 4px;
-}
-
 .refresh-btn {
   padding: 8px 16px;
-  margin-right: 10px;
   background: #1890ff;
   color: white;
   border: none;
@@ -330,7 +523,6 @@ button:disabled {
   min-width: 60px;
 }
 
-/* 任务列表样式 */
 .task-list {
   display: flex;
   flex-direction: column;
@@ -377,7 +569,6 @@ button:disabled {
 .priority-4 { color: #52c41a; }
 .priority-5 { color: #1890ff; }
 
-/* 表单样式 */
 .modal {
   position: fixed;
   top: 0;
@@ -447,7 +638,6 @@ button:disabled {
   border: none;
 }
 
-/* 加载状态 */
 .loading-overlay {
   position: absolute;
   top: 0;
@@ -477,7 +667,6 @@ button:disabled {
   100% { transform: rotate(360deg); }
 }
 
-/* 错误提示 */
 .error-message {
   padding: 16px;
   background: #fff2f0;
