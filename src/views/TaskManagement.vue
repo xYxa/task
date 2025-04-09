@@ -13,8 +13,8 @@
         <button @click="fetchTasks" class="refresh-btn" :disabled="loading">
           ↻ 刷新
         </button>
-        <button @click="showReportForm = !showReportForm" class="report-btn">
-          {{ showReportForm ? '隐藏周报' : '生成周报' }}
+        <button @click="generateWeeklyReport" class="report-btn" :disabled="loading">
+          📊 生成周报
         </button>
       </div>
     </div>
@@ -106,6 +106,14 @@
             </select>
           </div>
           <div class="form-group">
+            <label>结束时间 <span class="required">*</span></label>
+            <input
+                type="datetime-local"
+                v-model="editingTask.end_time_formatted"
+                required
+            >
+          </div>
+          <div class="form-group">
             <label>任务详情</label>
             <textarea v-model="editingTask.content" rows="4" maxlength="500"></textarea>
           </div>
@@ -128,6 +136,25 @@
         </form>
       </div>
     </div>
+
+    <!-- 在模板底部添加周报模态框 -->
+    <div v-if="showReportModal" class="modal">
+      <div class="report-container">
+        <div class="report-header">
+          <h3>运维周报</h3>
+          <button @click="showReportModal = false" class="close-btn">×</button>
+        </div>
+        <div v-if="reportLoading" class="loading-overlay">
+          <div class="loading-spinner"></div>
+          <span>生成周报中...</span>
+        </div>
+        <div v-else class="report-content" v-html="weeklyReport"></div>
+        <div class="report-actions">
+          <button @click="downloadReport" class="download-btn">下载PDF</button>
+          <button @click="showReportModal = false" class="close-btn">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -135,7 +162,6 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import dayjs from 'dayjs'
-import WeeklyReport from "@/components/WeeklyReport.vue";
 
 export default {
   setup() {
@@ -147,14 +173,53 @@ export default {
     const showEditDialog = ref(false)
     const submitting = ref(false)
 
+    // 在setup()中添加新状态
+    const showReportModal = ref(false)
+    const weeklyReport = ref('')
+    const reportLoading = ref(false)
+
+// 添加生成周报方法
+    const generateWeeklyReport = async () => {
+      try {
+        reportLoading.value = true
+        showReportModal.value = true
+        const response = await api.get('/user/weekly-report')
+        weeklyReport.value = response.data.report
+      } catch (err) {
+        console.error('生成周报失败:', err)
+        error.value = `生成周报失败: ${err.message}`
+      } finally {
+        reportLoading.value = false
+      }
+    }
+
+// 添加下载报告方法
+    const downloadReport = () => {
+      // 这里可以使用html2pdf等库实现PDF下载
+      alert('PDF下载功能需集成html2pdf库')
+    }
+
+
     const editingTask = ref({
       ID: null,
       name: '',
       task_type: '',
       content: '',
       priority: 3,
-      uploader: ''
+      uploader: '',
+      end_time: null,          // 存储原始时间对象
+      end_time_formatted: ''   // 用于v-model绑定的格式化时间
     })
+    const formatDateForInput = (date) => {
+      if (!date) return ''
+      // 将日期转换为YYYY-MM-DDTHH:mm格式，用于datetime-local输入
+      return dayjs(date).format('YYYY-MM-DDTHH:mm')
+    }
+    const parseDateFromInput = (dateStr) => {
+      if (!dateStr) return null
+      return new Date(dateStr)
+    }
+
 
     const api = axios.create({
       baseURL: 'http://192.168.106.5:8080',
@@ -163,6 +228,7 @@ export default {
         'Content-Type': 'application/json'
       }
     })
+
 
     const formatDate = (date) => dayjs(date).format('YYYY-MM-DD HH:mm')
 
@@ -254,7 +320,9 @@ export default {
         task_type: task.task_type || '',
         content: task.content || '',
         priority: task.priority || 3,
-        uploader: task.uploader || getCurrentUser()
+        uploader: task.uploader || getCurrentUser(),
+        end_time: task.end_time ? new Date(task.end_time) : new Date(Date.now() + 86400000), // 默认1天后
+        end_time_formatted: formatDateForInput(task.end_time)
       }
       showEditDialog.value = true
     }
@@ -263,66 +331,38 @@ export default {
       try {
         submitting.value = true;
 
-        // 获取当前用户（优先从URL参数，其次从localStorage）
+        // 获取当前用户
         const uploader = getUploaderFromURL() || getCurrentUser();
 
-        // 准备符合后端结构的数据
+        // 转换时间格式
+        const endTime = parseDateFromInput(editingTask.value.end_time_formatted) ||
+            new Date(Date.now() + 86400000); // 默认1天后
+
+        // 准备提交数据
         const payload = {
           name: editingTask.value.name,
-          task_type: editingTask.value.task_type, // 注意转为后端使用的蛇形命名
+          task_type: editingTask.value.task_type,
           content: editingTask.value.content,
-          priority: parseInt(editingTask.value.priority) || 3, // 确保是数字
+          priority: parseInt(editingTask.value.priority) || 3,
           uploader: uploader,
-          done: editingTask.value.done || false // 确保有默认值
+          done: editingTask.value.done || false,
+          end_time: endTime.toISOString() // 转换为ISO格式
         };
-
-        console.log('提交数据:', {
-          original: editingTask.value,
-          transformed: payload
-        });
 
         let response;
         if (editingTask.value.ID) {
-          // 更新任务
           response = await api.put(`/user/tasks/${editingTask.value.ID}`, payload);
-          console.log('更新响应:', response.data);
         } else {
-          // 创建任务
           response = await api.post('/user/tasks', payload, {
-            params: { uploader } // 确保上传者通过URL参数传递
+            params: { uploader }
           });
-          console.log('创建响应:', response.data);
         }
 
-        // 检查响应是否成功（根据您的API实际结构调整）
-        if (response.data && response.data.code !== 200) {
-          throw new Error(response.data.msg || '操作失败');
-        }
-
-        // 关闭弹窗并刷新列表
         showEditDialog.value = false;
         await fetchTasks();
-
       } catch (err) {
-        console.error('完整错误详情:', {
-          message: err.message,
-          request: err.config ? {
-            url: err.config.url,
-            method: err.config.method,
-            data: err.config.data,
-            params: err.config.params
-          } : null,
-          response: err.response ? {
-            status: err.response.status,
-            data: err.response.data
-          } : null
-        });
-
-        // 用户友好的错误提示
-        const errorMsg = err.response?.data?.msg ||
-            err.response?.data?.error ||
-            err.message;
-        alert(`操作失败: ${errorMsg}`);
+        console.error('操作失败:', err);
+        alert(`操作失败: ${err.response?.data?.error || err.message}`);
       } finally {
         submitting.value = false;
       }
@@ -370,13 +410,18 @@ export default {
       showEditDialog,
       editingTask,
       submitting,
+      showReportModal,
+      weeklyReport,
+      reportLoading,
       fetchTasks,
+      generateWeeklyReport,
       handleQuickAdd,
       showEditForm,
       handleSubmitTask,
       deleteTask,
       toggleTaskStatus,
-      formatDate
+      formatDate,
+      downloadReport
     }
   }
 }
