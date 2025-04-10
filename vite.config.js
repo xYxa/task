@@ -16,8 +16,8 @@ export default defineConfig({
   server:{
     port:4000,
    // host:'192.168.0.4',
-   // host:'192.168.106.5',
     host:'192.168.106.5',
+    //host:'0.0.0.0',
     open:true,
   }
 })

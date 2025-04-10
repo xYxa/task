@@ -52,8 +52,13 @@
             <span v-if="task.priority" class="priority" :class="'priority-' + task.priority">
               优先级: {{ task.priority }}
             </span>
+            <p>任务创建和更新时间：</p>
             <span class="time">
               {{ formatDate(task.createdAt) }}
+            </span>
+            <p>任务结束时间：</p>
+            <span class="time">
+              {{ formatDate(task.end_time) }}
             </span>
           </div>
         </div>
