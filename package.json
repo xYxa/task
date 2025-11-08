@@ -9,8 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.7.8",
-    "dayjs": "^1.11.13",
+    "dayjs": "^1.11.18",
+    "element-plus": "^2.11.2",
     "pinia": "^3.0.1",
     "vue": "^3.3.11",
     "xlsx": "^0.18.5"
